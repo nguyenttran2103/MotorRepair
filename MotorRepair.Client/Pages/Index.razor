@@ -1,0 +1,234 @@
+﻿@page "/"
+@inject ITicketService _ticketService
+@inject IJSRuntime _jsRunTime;
+
+
+@if (IsPageProcessing) {
+    <_LoadingIndicator></_LoadingIndicator>
+}
+else {
+    <div class="row mt-4 mx-4">
+        <div class="col-6">
+            <h4 class="card-title text-primary">Ticket List</h4>
+        </div>
+        <div class="col-2 offset-4">
+            <button class="btn btn-primary form-control" @onclick="AddNewTicketAsync">
+                <i class="bi bi-plus-circle-fill"></i>&nbsp;
+                New Ticket
+            </button>
+        </div>
+        <div class="col-12 mt-4">
+            @if (Tickets.Any()) {
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Description</th>
+                            <th>Created Date</th>
+                            <th>Created By</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var ticket in Tickets) {
+                            <tr>
+                                <td>@ticket.Title</td>
+                                <td>@ticket.Description</td>
+                                <td>@ticket.CreatedDate.ToLocalTime()</td>
+                                <td>@ticket.CreatedBy</td>
+                                @if(ticket.Status.Equals(Constants.TicketStatuses.TODO)) {
+                                    <td valign="middle"><span class="badge bg-warning text-dark">@ticket.Status</span></td>
+                                } else if(ticket.Status.Equals(Constants.TicketStatuses.IN_PROGRESS)) {
+                                    <td valign="middle"><span class="badge bg-success">@ticket.Status</span></td>
+                                } else {
+                                    <td valign="middle"><span class="badge bg-secondary">@ticket.Status</span></td>
+                                }                                
+                                <td>                                    
+                                    <a href="/Details/@ticket.Id" class="btn btn-info">
+                                        <i class="bi bi-info-circle-fill"></i>
+                                        View
+                                    </a>
+                                    <button class="btn btn-primary" @onclick="(args) => EditTicketAsync(args, ticket)">
+                                        <i class="bi bi-pencil-square"></i>
+                                        Edit
+                                    </button>
+                                    <button class="btn btn-danger" @onclick="(args) => DeleteTicketAsync(args, ticket.Id)">
+                                        <i class="bi bi-x-circle-fill"></i>
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else {
+                <h2>No Records Found...</h2>
+            }
+        </div>
+    </div>
+}
+
+<!-- Delete Confirmation Modal -->
+<_DeleteConfirmation OnConfirmationChanged="ConfirmationChangedHandlerAsync" IsProcessing="@IsDeleteProcessing"></_DeleteConfirmation>
+
+<!-- Upsert Ticket Modal -->
+<div id="upsertTicketModal" class="modal fade" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@ModalTitle</h5>
+                <button type="button" class="close" data-bs-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <EditForm Model="Ticket" OnValidSubmit="SaveTicketAsync">
+                <DataAnnotationsValidator />
+                <div class="modal-body">
+
+                    <div class="form-group">
+                        <label for="ticket-title" class="col-form-label">Title:</label>
+                        <InputText id="ticket-title" @bind-Value="Ticket.Title" class="form-control"></InputText>
+                        <ValidationMessage For="() => Ticket.Title"></ValidationMessage>
+                    </div>
+                    <div class="form-group">
+                        <label for="title-description" class="col-form-label">Description:</label>
+                        <InputTextArea id="title-description" @bind-Value="Ticket.Description" class="form-control"></InputTextArea>
+                        <ValidationMessage For="() => Ticket.Description"></ValidationMessage>
+                    </div>
+                    <div class="form-group">
+                        <label for="title-status" class="col-form-label">Status:</label>
+                        @if (IsUpdate) {
+                            <InputSelect @bind-Value="Ticket.Status" class="form-select">
+                                <option value="" disabled="disabled" selected>-- Select Status --</option>
+                                @foreach(var status in Constants.TicketStatuseList) {
+                                    <option value="@status">@status</option>
+                                }
+                            </InputSelect>
+                            <ValidationMessage d For="() => Ticket.Status"></ValidationMessage>
+                        } else {
+                            <select class="form-select" disabled>
+                                <option value="@Constants.TicketStatuses.TODO" selected>@Constants.TicketStatuses.TODO</option>
+                            </select>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    @if (IsUpsertProcessing) {
+                        <button type="button" disabled class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button class="btn btn-primary" type="button" disabled>
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            Saving...
+                        </button>
+                    } else {
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    }
+                    
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    private IEnumerable<TicketDTO> Tickets { get; set; } = new List<TicketDTO>();
+    private TicketDTO Ticket { get; set; } = new TicketDTO();
+    private bool IsPageProcessing { get; set; } = false;
+    private string ModalTitle { get; set; } = "New Ticket";
+    private bool IsUpdate { get; set; } = false;
+    private bool IsUpsertProcessing { get; set; } = false;
+    private bool IsDeleteProcessing { get; set; } = false;
+    private int DeletedTicketId { get; set; }
+
+    protected override async Task OnInitializedAsync() {
+        await LoadTicketsAsync();
+    }
+
+    private async Task LoadTicketsAsync() {
+        IsPageProcessing = true;        
+        try {
+            Tickets = await _ticketService.GetAll();
+        } catch (Exception ex) {
+            await _jsRunTime.ToastrError(ex.Message);
+        }
+        IsPageProcessing = false;
+    }
+
+    private async Task AddNewTicketAsync(MouseEventArgs args) {
+        IsUpdate = false;
+        Ticket = new TicketDTO() { Status = Constants.TicketStatuses.TODO };
+        ModalTitle = "New Ticket";
+        await _jsRunTime.ShowModal("upsertTicketModal");
+    }
+
+    private async Task EditTicketAsync(MouseEventArgs args, TicketDTO currentTicket) {
+        IsUpdate = true;
+        Ticket = currentTicket;
+        ModalTitle = "Update Ticket";
+        await _jsRunTime.ShowModal("upsertTicketModal");
+    }
+
+    private async Task DeleteTicketAsync(MouseEventArgs args, int id) {
+        DeletedTicketId = id;
+        await _jsRunTime.ShowDeleteModal();
+    }
+
+    private async Task CloseUpsertTicketModalAsync() {
+        IsUpsertProcessing = false;
+        await _jsRunTime.HideModal("upsertTicketModal");
+    }
+
+    private async Task CloseDeleteModalAsync() {
+        IsDeleteProcessing = false;
+        await _jsRunTime.HideDeleteModal();
+    }
+
+    private async Task SaveTicketAsync(EditContext context) {
+        if (Ticket.Id == 0) {
+            // CREATE
+            IsUpsertProcessing = true;
+            // Init ticket with default TODO status
+            Ticket.Status = Constants.TicketStatuses.TODO;
+            try
+            {
+                await _ticketService.Create(Ticket);
+                await CloseUpsertTicketModalAsync();
+                await LoadTicketsAsync();
+                await _jsRunTime.ToastrSuccess("New Ticket addedd successfully");
+            } catch(Exception ex) {
+                IsUpsertProcessing = false;
+                await _jsRunTime.ToastrError(ex.Message);
+            }
+        } else {
+            // UPDATE
+            IsUpsertProcessing = true;
+            try {
+                Ticket.WorkItems = null;
+                await _ticketService.Update(Ticket);
+                await CloseUpsertTicketModalAsync();
+                await LoadTicketsAsync();
+                await _jsRunTime.ToastrSuccess($"Ticket-{Ticket.Id} has been updated");
+            } catch (Exception ex) {
+                IsUpsertProcessing = false;
+                await _jsRunTime.ToastrError(ex.Message);
+            }
+        }
+    }
+
+    private async Task ConfirmationChangedHandlerAsync(bool isConfirmed) {
+        if (isConfirmed && DeletedTicketId > 0) {
+            IsDeleteProcessing = true;
+            try {
+                await _ticketService.Delete(DeletedTicketId);
+                await CloseDeleteModalAsync();
+                await LoadTicketsAsync();
+                await _jsRunTime.ToastrSuccess($"Ticket-{DeletedTicketId} deleted");
+            } catch (Exception ex) {
+                IsDeleteProcessing = false;
+                await _jsRunTime.ToastrError(ex.Message);
+            }
+        }
+    }
+}

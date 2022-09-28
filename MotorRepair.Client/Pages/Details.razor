@@ -1,0 +1,248 @@
+﻿@page "/Details/{id:int}"
+@inject ITicketService _ticketService;
+@inject IWorkItemService _workItemService;
+@inject IJSRuntime _jsRunTime;
+
+@if (IsPageProcessing) {
+    <_LoadingIndicator></_LoadingIndicator>
+} else {
+    <div class="row m-4">
+        <div class="col-3">
+            <h3>Ticket</h3>
+            <div class="card">
+                <div class="card-header">
+                    <b>Ticket #@Ticket.Id</b>
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title">Title</h5>
+                    <p class="card-text">@Ticket.Title</p>
+
+                    <h5 class="card-title">Description</h5>
+                    <p class="card-text">@Ticket.Description</p>
+
+                    <h5 class="card-title">Created By</h5>
+                    <p class="card-text">@Ticket.CreatedBy</p>
+
+                    <h5 class="card-title">Status</h5>
+                    <p class="card-text">@Ticket.Status</p>
+
+                    <button class="btn btn-primary" @onclick="(_) => WorkItemAddClickedAsync(Ticket.Id)">
+                        <i class="bi bi-plus-circle-fill"></i>&nbsp;
+                        Add Work Item
+                    </button>
+                </div>
+                <div class="card-footer text-muted">
+                    Created Date: @Ticket.CreatedDate
+                </div>
+            </div>
+        </div>
+        <div class="col-9">
+            <h3>Work Items</h3>
+            @if(Ticket.WorkItems.Any()) {
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Labor Rare/Unit Price</th>
+                            <th>Labor Hours/Quantity</th>
+                            <th>Created Date</th>
+                            <th>Created By</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach(var workItem in Ticket.WorkItems) {
+                            <tr class="@(workItem.Type.Equals(Constants.WorkItemTypes.PART) ? "table-warning" : null)">
+                                <td>@workItem.Type</td>
+                                <td>@workItem.Price.ToString("C")</td>
+                                @if (workItem.Type.ToUpper().Equals(Constants.WorkItemTypes.LABOR)) {
+                                    <td>@workItem.Hours</td>
+                                } else {
+                                    <td>@workItem.Quantity</td>
+                                }
+                                <td>@workItem.CreatedDate.ToLocalTime()</td>
+                                <td>@workItem.CreatedBy</td>
+                                <td>
+                                    <input type="button" value="Edit" class="btn btn-primary" @onclick="(_) => WorkItemEditClickedAsync(workItem)" />
+                                    <input type="button" value="Delete" class="btn btn-danger" @onclick="(_) => WorkItemDeleteClickedAsynce(workItem.Id)" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+    <div class="row m-5 float-end">
+        <a class="btn btn-primary" style="width:250px;" href="/">
+            <i class="bi bi-arrow-left-circle-fill"></i>&nbsp;
+            Return
+        </a>
+    </div>
+}
+
+<!-- Delete Confirmation Modal -->
+<_DeleteConfirmation OnConfirmationChanged="ConfirmationChangedHandlerAsync" IsProcessing="@IsDeleteProcessing"></_DeleteConfirmation>
+
+<!-- Upsert Work Item Modal -->
+<div id="upsertWorkItemModal" class="modal fade" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">@ModalTitle</h5>
+                <button type="button" class="close" data-bs-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <EditForm Model="WorkItem" OnValidSubmit="SaveWorkItemAsync">
+                <DataAnnotationsValidator />
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="wo-type" class="col-form-label">Type:</label>
+                        <InputSelect id="wo-type" @bind-Value="WorkItem.Type" class="form-control">
+                            <option value="" disabled selected="@(WorkItem.Id == 0 ? "true" : "false")">-- SELECT TYPE --</option>
+                            @foreach(var type in Constants.WorkItemTypeList) {
+                                @if(WorkItem.Id > 0 && WorkItem.Type.ToUpper().Equals(type)) {
+                                    <option value="@type" selected>@type</option>
+                                } else {
+                                    <option value="@type">@type</option>
+                                }                                
+                            }
+                        </InputSelect>
+                        <ValidationMessage For="() => WorkItem.Type"></ValidationMessage>
+                    </div>
+                    <div class="form-group">
+                        <label for="wo-price" class="col-form-label">Price:</label>
+                        <InputNumber id="wo-price" @bind-Value="WorkItem.Price" class="form-control"></InputNumber>
+                        <ValidationMessage For="() => WorkItem.Price"></ValidationMessage>
+                    </div>
+                    <div class="form-group">
+                       @if(WorkItem.Type != null && WorkItem.Type.ToUpper().Equals(Constants.WorkItemTypes.LABOR)) {
+                            <label for="wo-hours" class="col-form-label">Hours:</label>
+                            <InputNumber id="wo-hours" @bind-Value="WorkItem.Hours" class="form-control"></InputNumber>
+                            <ValidationMessage For="() => WorkItem.Hours"></ValidationMessage>
+                       }
+
+                       @if (WorkItem.Type != null && WorkItem.Type.ToUpper().Equals(Constants.WorkItemTypes.PART)) {
+                            <label for="wo-qty" class="col-form-label">Quantity:</label>
+                            <InputNumber id="wo-qty" @bind-Value="WorkItem.Quantity" class="form-control"></InputNumber>
+                            <ValidationMessage For="() => WorkItem.Quantity"></ValidationMessage>
+                       }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    @if (IsUpsertProcessing) {
+                        <button type="button" disabled class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button class="btn btn-primary" type="button" disabled>
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            Saving...
+                        </button>
+                    }
+                    else {
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    }
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private bool IsPageProcessing { get; set; } = false;
+    private bool IsUpsertProcessing { get; set; } = false;
+    private bool IsDeleteProcessing { get; set; } = false;
+    private TicketDTO Ticket { get; set; } = new TicketDTO();
+    private WorkItemDTO WorkItem { get; set; } = new WorkItemDTO();
+    private int DeletedWorkItemId { get; set; }
+    private string ModalTitle { get; set; } = "New Work Item";
+    private bool IsLaborTypeSelected { get; set; }
+
+    private async Task LoadTickDetailsAsync() {
+        IsPageProcessing = true;
+        try {
+            Ticket = await _ticketService.Get(Id);
+        } catch(Exception ex) {
+            await _jsRunTime.ToastrError(ex.Message);
+        }
+        IsPageProcessing = false;
+    }
+
+    protected override async Task OnInitializedAsync() {
+        await LoadTickDetailsAsync();
+    }
+
+    private async Task WorkItemAddClickedAsync(int parentTicketId) {
+        ModalTitle = "New Work Item";
+        WorkItem = new WorkItemDTO() { TicketId = parentTicketId };
+        await _jsRunTime.ShowModal("upsertWorkItemModal");
+    }
+
+    private async Task WorkItemEditClickedAsync(WorkItemDTO workItem) {
+        ModalTitle = "Update WorkItem";
+        WorkItem = workItem;
+        await _jsRunTime.ShowModal("upsertWorkItemModal");
+    }
+
+    private async Task WorkItemDeleteClickedAsynce(int id) {
+        DeletedWorkItemId = id;
+        await _jsRunTime.ShowDeleteModal();
+    }
+
+    private async Task CloseDeleteModalAsync() {
+        IsDeleteProcessing = false;
+        await _jsRunTime.HideDeleteModal();
+    }
+
+    private async Task ConfirmationChangedHandlerAsync(bool isConfirmed) {
+        if (isConfirmed) {
+            IsDeleteProcessing = true;
+            try {
+                await _workItemService.Delete(DeletedWorkItemId);
+                await CloseDeleteModalAsync();
+                await LoadTickDetailsAsync();
+                await _jsRunTime.ToastrSuccess($"WorkItem-#{DeletedWorkItemId} deleted");
+            } catch(Exception ex) {
+                await _jsRunTime.ToastrError(ex.Message);
+                IsDeleteProcessing = false;
+            }
+        }
+    }
+
+    private async Task CloseUpsertTicketModalAsync() {
+        IsUpsertProcessing = false;
+        await _jsRunTime.HideModal("upsertWorkItemModal");
+    }
+
+    private async Task SaveWorkItemAsync(EditContext context) {
+        if (WorkItem.Id == 0) {
+            // CREATE
+            IsUpsertProcessing = true;
+            try {
+                await _workItemService.Create(WorkItem);
+                await CloseUpsertTicketModalAsync();
+                await LoadTickDetailsAsync();
+                await _jsRunTime.ToastrSuccess("Work Item added successfully");
+            } catch (Exception ex) {
+                await _jsRunTime.ToastrError(ex.Message);
+                IsUpsertProcessing = false;
+            }            
+        } else {
+            // UPDATE
+            IsUpsertProcessing = true;
+            try {
+                WorkItem.Ticket = null;
+                await _workItemService.Update(WorkItem);
+                await CloseUpsertTicketModalAsync();
+                await LoadTickDetailsAsync();
+                await _jsRunTime.ToastrSuccess($"Work Item-#{WorkItem.Id} updated");
+            } catch (Exception ex) {
+                await _jsRunTime.ToastrError(ex.Message);
+                IsUpsertProcessing = false;
+            }
+        }
+    }
+}
